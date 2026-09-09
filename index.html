@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>纯前端音频格式转换器</title>
-    <!-- 引入稳定的 FFmpeg.wasm v0.11 经典版本 -->
+    <!-- 引入稳定的 FFmpeg.wasm v0.11.6 包装器 -->
     <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
     <style>
         body { font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background: #f9fafb; }
@@ -57,7 +57,8 @@
             appendLog('正在初始化全新的 FFmpeg 实例...');
             ffmpeg = createFFmpeg({ 
                 log: true,
-                corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js'
+                // 关键修复：使用与 0.11.6 完全匹配的 0.11.0 标准核心，彻底解决 proxy_main 缺失报错
+                corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
             });
             
             ffmpeg.setLogger(({ message }) => {
@@ -131,7 +132,7 @@
             console.error("详细捕获:", error);
             appendLog(`❌ 发生错误: ${error.message || error}`, 'red');
             
-            // 🚨 关键自愈：如果发生任何内部错误或锁死，直接销毁实例，下次重试时彻底重来
+            // 实例自愈
             ffmpeg = null;
             appendLog('⚠️ 转换实例已重置，您可以尝试更换更小的文件再次点击转换。', 'orange');
         } finally {
