@@ -15,7 +15,7 @@
         button { background: #0051c3; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.2s; }
         button:disabled { background: #ccc; cursor: not-allowed; }
         button:hover:not(:disabled) { background: #003d99; }
-        #log { margin-top: 20px; font-size: 14px; color: #666; text-align: left; background: #f1f1f1; padding: 10px; border-radius: 6px; height: 120px; overflow-y: auto; font-family: monospace;}
+        #log { margin-top: 20px; font-size: 14px; color: #666; text-align: left; background: #f1f1f1; padding: 10px; border-radius: 6px; height: 160px; overflow-y: auto; font-family: monospace; line-height: 1.5;}
     </style>
 </head>
 <body>
@@ -39,7 +39,7 @@
 
 <script>
     const { FFmpeg } = FFmpegWASM;
-    const { fetchFile, toBlobURL } = FFmpegUtil;
+    const { fetchFile } = FFmpegUtil;
     const ffmpeg = new FFmpeg();
 
     const uploader = document.getElementById('uploader');
@@ -47,25 +47,42 @@
     const convertBtn = document.getElementById('convert-btn');
     const logDisplay = document.getElementById('log');
 
-    // 监听 FFmpeg 处理日志输出
     ffmpeg.on('log', ({ message }) => {
-        logDisplay.innerHTML += `<div>${message}</div>`;
+        logDisplay.innerHTML += `<div>[FFmpeg] ${message}</div>`;
         logDisplay.scrollTop = logDisplay.scrollHeight;
     });
 
-    // 已修复跨域加载问题的加载函数
+    // 我们自己实现的更安全的 Blob URL 下载器，带 HTTP 状态码拦截
+    async function safeToBlobURL(url, mimeType) {
+        logDisplay.innerHTML += `<div style="color: #0066cc;">--> 正在请求: ${url.split('/').pop()}</div>`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`文件下载失败: ${url} (HTTP 状态码: ${response.status})`);
+        }
+        const blob = await response.blob();
+        return URL.createObjectURL(new Blob([blob], { type: mimeType }));
+    }
+
     async function loadFFmpeg() {
-        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+        const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
         const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
         
+        logDisplay.innerHTML += `<div>开始下载引擎依赖文件...</div>`;
+        
+        // 拆分下载，明确到底是哪个文件出错了
+        const coreURL = await safeToBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
+        const wasmURL = await safeToBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
+        const workerURL = await safeToBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
+        
+        logDisplay.innerHTML += `<div>文件下载完毕，正在启动引擎...</div>`;
+        
         await ffmpeg.load({
-            // 核心库
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            // WebAssembly 文件
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            // 关键修复：把 worker 脚本也转为本地虚拟链接，绕过浏览器的 Worker 跨域安全限制
-            classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript')
+            coreURL: coreURL,
+            wasmURL: wasmURL,
+            classWorkerURL: workerURL
         });
+        
+        logDisplay.innerHTML += `<div style="color: green;">引擎启动成功！</div>`;
     }
 
     convertBtn.addEventListener('click', async () => {
@@ -79,28 +96,23 @@
         const outputFileName = `output.${targetFormat}`;
         
         convertBtn.disabled = true;
-        logDisplay.innerHTML = `<div>正在准备转换引擎...</div>`;
+        logDisplay.innerHTML = `<div>正在准备转换环境...</div>`;
 
         try {
-            // 1. 初始化并加载 FFmpeg (如果尚未加载)
             if (!ffmpeg.loaded) {
                 await loadFFmpeg();
             }
 
-            // 2. 将用户选择的文件写入 FFmpeg 的虚拟内存文件系统中
             const inputFileName = 'input_' + file.name;
             logDisplay.innerHTML += `<div>正在将文件读入内存: ${file.name}...</div>`;
             await ffmpeg.writeFile(inputFileName, await fetchFile(file));
 
-            // 3. 执行 FFmpeg 转换命令 (例如: ffmpeg -i input.wav output.mp3)
             logDisplay.innerHTML += `<div>开始转换为 ${targetFormat.toUpperCase()}，处理中...</div>`;
             await ffmpeg.exec(['-i', inputFileName, outputFileName]);
 
-            // 4. 从虚拟文件系统中读取转换后的成品文件
             logDisplay.innerHTML += `<div>转换完成，正在生成文件...</div>`;
             const fileData = await ffmpeg.readFile(outputFileName);
 
-            // 5. 将成品文件转化为 Blob 对象，并触发浏览器自动下载
             const blob = new Blob([fileData.buffer], { type: `audio/${targetFormat}` });
             const downloadUrl = URL.createObjectURL(blob);
             
@@ -113,8 +125,12 @@
 
             logDisplay.innerHTML += `<div style="color: #008000; font-weight: bold;">🎉 转换成功！文件已开始下载。</div>`;
         } catch (error) {
-            logDisplay.innerHTML += `<div style="color: red;">❌ 发生错误: ${error.message}</div>`;
-            console.error(error);
+            // 这里我们强行解析出真实错误内容，不再显示 undefined
+            let errMsg = error && error.message ? error.message : JSON.stringify(error);
+            if (errMsg === "{}" || !errMsg) errMsg = String(error);
+            
+            logDisplay.innerHTML += `<div style="color: red;">❌ 发生错误: ${errMsg}</div>`;
+            console.error("详细报错信息:", error);
         } finally {
             convertBtn.disabled = false;
         }
