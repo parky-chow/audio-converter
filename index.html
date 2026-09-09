@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>纯前端音频格式转换器</title>
+    <!-- 引入 FFmpeg.wasm 核心库 -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background: #f9fafb; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { font-size: 24px; color: #333; margin-bottom: 20px; }
+        select, button, input { margin: 10px 0; padding: 10px; width: 100%; box-sizing: border-box; font-size: 16px; }
+        button { background: #0051c3; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        button:hover:not(:disabled) { background: #003d99; }
+        #log { margin-top: 20px; font-size: 14px; color: #666; text-align: left; background: #f1f1f1; padding: 10px; border-radius: 6px; height: 100px; overflow-y: auto; font-family: monospace;}
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>🎧 纯前端音频转换器</h1>
+    
+    <input type="file" id="uploader" accept="audio/*">
+    
+    <select id="format-selector">
+        <option value="mp3">转换为 MP3</option>
+        <option value="wav">转换为 WAV</option>
+        <option value="ogg">转换为 OGG</option>
+        <option value="aac">转换为 AAC</option>
+    </select>
+
+    <button id="convert-btn">开始转换</button>
+
+    <div id="log">等待上传文件...（首次加载需下载核心引擎，请耐心等待）</div>
+</div>
+
+<script>
+    const { FFmpeg } = FFmpegWASM;
+    const { fetchFile, toBlobURL } = FFmpegUtil;
+    const ffmpeg = new FFmpeg();
+
+    const uploader = document.getElementById('uploader');
+    const formatSelector = document.getElementById('format-selector');
+    const convertBtn = document.getElementById('convert-btn');
+    const logDisplay = document.getElementById('log');
+
+    // 监听 FFmpeg 处理日志输出
+    ffmpeg.on('log', ({ message }) => {
+        logDisplay.innerHTML += `<div>${message}</div>`;
+        logDisplay.scrollTop = logDisplay.scrollHeight;
+    });
+
+    async function loadFFmpeg() {
+        // 使用 toBlobURL 解决跨域 Worker 加载问题
+        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+        await ffmpeg.load({
+            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+        });
+    }
+
+    convertBtn.addEventListener('click', async () => {
+        const file = uploader.files[0];
+        if (!file) {
+            alert('请先选择一个音频文件！');
+            return;
+        }
+
+        const targetFormat = formatSelector.value;
+        const outputFileName = `output.${targetFormat}`;
+        
+        convertBtn.disabled = true;
+        logDisplay.innerHTML = `<div>正在准备转换引擎...</div>`;
+
+        try {
+            // 1. 初始化并加载 FFmpeg (如果尚未加载)
+            if (!ffmpeg.loaded) {
+                await loadFFmpeg();
+            }
+
+            // 2. 将用户选择的文件写入 FFmpeg 的虚拟内存文件系统中
+            const inputFileName = 'input_' + file.name;
+            logDisplay.innerHTML += `<div>读取文件: ${file.name}...</div>`;
+            await ffmpeg.writeFile(inputFileName, await fetchFile(file));
+
+            // 3. 执行 FFmpeg 转换命令 (例如: ffmpeg -i input.wav output.mp3)
+            logDisplay.innerHTML += `<div>开始转换为 ${targetFormat.toUpperCase()}，这可能需要一点时间...</div>`;
+            await ffmpeg.exec(['-i', inputFileName, outputFileName]);
+
+            // 4. 从虚拟文件系统中读取转换后的成品文件
+            logDisplay.innerHTML += `<div>转换完成，正在生成下载链接...</div>`;
+            const fileData = await ffmpeg.readFile(outputFileName);
+
+            // 5. 将成品文件转化为 Blob 对象，并触发浏览器自动下载
+            const blob = new Blob([fileData.buffer], { type: `audio/${targetFormat}` });
+            const downloadUrl = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            a.download = `converted_${Date.now()}.${targetFormat}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
+            logDisplay.innerHTML += `<div style="color: green;">🎉 转换成功！文件已开始下载。</div>`;
+        } catch (error) {
+            logDisplay.innerHTML += `<div style="color: red;">❌ 发生错误: ${error.message}</div>`;
+            console.error(error);
+        } finally {
+            convertBtn.disabled = false;
+        }
+    });
+</script>
+
+</body>
+</html>
