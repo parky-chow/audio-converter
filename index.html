@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>纯前端音频格式转换器</title>
-    <!-- 引入稳定的 FFmpeg.wasm v0.11 经典版本，完美支持纯网页引入 -->
+    <!-- 引入稳定的 FFmpeg.wasm v0.11 经典版本 -->
     <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
     <style>
         body { font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background: #f9fafb; }
@@ -39,11 +39,7 @@
 <script>
     const { createFFmpeg, fetchFile } = FFmpeg;
     
-    // 使用 v0.11 的单线程核心 (core-st)，规避绝大多数环境限制与报错
-    const ffmpeg = createFFmpeg({ 
-        log: true,
-        corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js'
-    });
+    let ffmpeg = null;
 
     const uploader = document.getElementById('uploader');
     const formatSelector = document.getElementById('format-selector');
@@ -55,17 +51,27 @@
         logDisplay.scrollTop = logDisplay.scrollHeight;
     }
 
-    // 监听 FFmpeg 内部日志
-    ffmpeg.setLogger(({ message }) => {
-        appendLog(`[FFmpeg] ${message}`);
-    });
+    // 获取或重新初始化 FFmpeg 实例（带故障自愈能力）
+    async function getFFmpeg() {
+        if (ffmpeg === null) {
+            appendLog('正在初始化全新的 FFmpeg 实例...');
+            ffmpeg = createFFmpeg({ 
+                log: true,
+                corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.1/dist/ffmpeg-core.js'
+            });
+            
+            ffmpeg.setLogger(({ message }) => {
+                appendLog(`[FFmpeg] ${message}`);
+            });
+        }
 
-    async function loadFFmpeg() {
         if (!ffmpeg.isLoaded()) {
             appendLog('正在加载核心转换引擎（首次加载约需下载几兆文件，请稍候）...');
             await ffmpeg.load();
             appendLog('🎉 引擎启动成功！', 'green');
         }
+        
+        return ffmpeg;
     }
 
     convertBtn.addEventListener('click', async () => {
@@ -75,29 +81,33 @@
             return;
         }
 
+        // 文件过大安全提示（防止浏览器内存溢出 OOM）
+        if (file.size > 50 * 1024 * 1024) {
+            alert('文件体积超过 50MB，纯前端转换极易导致浏览器内存耗尽崩溃，请选择较小的音频！');
+            return;
+        }
+
         const targetFormat = formatSelector.value;
-        const outputFileName = `output.${targetFormat}`;
+        const inputFileName = 'input_' + Date.now() + '_' + file.name;
+        const outputFileName = `output_${Date.now()}.${targetFormat}`;
         
         convertBtn.disabled = true;
         logDisplay.innerHTML = ''; // 清空日志
 
         try {
             appendLog('正在准备转换环境...');
-            await loadFFmpeg();
+            const activeFFmpeg = await getFFmpeg();
 
-            const inputFileName = 'input_' + Date.now() + '_' + file.name;
-            appendLog(`正在将文件读入内存: ${file.name}...`);
+            appendLog(`正在将文件读入内存: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)...`);
             const fileData = await fetchFile(file);
             
-            // v0.11 的虚拟文件写入语法
-            ffmpeg.FS('writeFile', inputFileName, fileData);
+            activeFFmpeg.FS('writeFile', inputFileName, fileData);
 
             appendLog(`开始转换为 ${targetFormat.toUpperCase()}，处理中...`);
-            await ffmpeg.run('-i', inputFileName, outputFileName);
+            await activeFFmpeg.run('-i', inputFileName, outputFileName);
 
             appendLog('转换完成，正在生成下载文件...');
-            // v0.11 的虚拟文件读取语法
-            const data = ffmpeg.FS('readFile', outputFileName);
+            const data = activeFFmpeg.FS('readFile', outputFileName);
 
             const blob = new Blob([data.buffer], { type: `audio/${targetFormat}` });
             const downloadUrl = URL.createObjectURL(blob);
@@ -110,9 +120,20 @@
             document.body.removeChild(a);
 
             appendLog('🎉 转换成功！文件已自动下载。', 'green');
+
+            // 清理虚拟内存中的输入输出文件
+            try {
+                activeFFmpeg.FS('unlink', inputFileName);
+                activeFFmpeg.FS('unlink', outputFileName);
+            } catch (e) {}
+
         } catch (error) {
             console.error("详细捕获:", error);
             appendLog(`❌ 发生错误: ${error.message || error}`, 'red');
+            
+            // 🚨 关键自愈：如果发生任何内部错误或锁死，直接销毁实例，下次重试时彻底重来
+            ffmpeg = null;
+            appendLog('⚠️ 转换实例已重置，您可以尝试更换更小的文件再次点击转换。', 'orange');
         } finally {
             convertBtn.disabled = false;
         }
