@@ -8,7 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
     <style>
         body { font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background: #f9fafb; }
-        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 20px; }
         h1 { font-size: 24px; color: #333; margin-bottom: 20px; }
         select, button, input { margin: 10px 0; padding: 10px; width: 100%; box-sizing: border-box; font-size: 16px; }
         button { background: #0051c3; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.2s; }
@@ -19,7 +19,16 @@
 </head>
 <body>
 
-<div class="card">
+<!-- 密码验证卡片 -->
+<div class="card" id="auth-card">
+    <h1>🔒 请输入访问密码</h1>
+    <input type="password" id="pwd-input" placeholder="请输入密码">
+    <button id="login-btn">确认进入</button>
+    <div id="auth-error" style="color: red; margin-top: 10px; font-size: 14px;"></div>
+</div>
+
+<!-- 音频转换功能卡片（默认隐藏） -->
+<div class="card" id="converter-card" style="display: none;">
     <h1>🎧 纯前端音频转换器</h1>
     
     <input type="file" id="uploader" accept="audio/*,video/*">
@@ -37,8 +46,40 @@
 </div>
 
 <script>
+    // --- 密码验证逻辑 ---
+    const authCard = document.getElementById('auth-card');
+    const converterCard = document.getElementById('converter-card');
+    const pwdInput = document.getElementById('pwd-input');
+    const loginBtn = document.getElementById('login-btn');
+    const authError = document.getElementById('auth-error');
+
+    function handleLogin() {
+        // 动态生成当天日期的 8 位数密码 (YYYYMMDD)
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const correctPassword = `${year}${month}${day}`;
+
+        if (pwdInput.value === correctPassword) {
+            authCard.style.display = 'none';
+            converterCard.style.display = 'block';
+        } else {
+            authError.textContent = '密码错误，无法进入';
+            pwdInput.value = '';
+        }
+    }
+
+    loginBtn.addEventListener('click', handleLogin);
+    pwdInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            handleLogin();
+        }
+    });
+
+
+    // --- 原有音频转换逻辑 ---
     const { createFFmpeg, fetchFile } = FFmpeg;
-    
     let ffmpeg = null;
 
     const uploader = document.getElementById('uploader');
@@ -51,13 +92,11 @@
         logDisplay.scrollTop = logDisplay.scrollHeight;
     }
 
-    // 获取或重新初始化 FFmpeg 实例（带故障自愈能力）
     async function getFFmpeg() {
         if (ffmpeg === null) {
             appendLog('正在初始化全新的 FFmpeg 实例...');
             ffmpeg = createFFmpeg({ 
                 log: true,
-                // 关键修复：使用与 0.11.6 完全匹配的 0.11.0 标准核心，彻底解决 proxy_main 缺失报错
                 corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
             });
             
@@ -82,7 +121,6 @@
             return;
         }
 
-        // 文件过大安全提示（防止浏览器内存溢出 OOM）
         if (file.size > 50 * 1024 * 1024) {
             alert('文件体积超过 50MB，纯前端转换极易导致浏览器内存耗尽崩溃，请选择较小的音频！');
             return;
@@ -93,7 +131,7 @@
         const outputFileName = `output_${Date.now()}.${targetFormat}`;
         
         convertBtn.disabled = true;
-        logDisplay.innerHTML = ''; // 清空日志
+        logDisplay.innerHTML = '';
 
         try {
             appendLog('正在准备转换环境...');
@@ -122,7 +160,6 @@
 
             appendLog('🎉 转换成功！文件已自动下载。', 'green');
 
-            // 清理虚拟内存中的输入输出文件
             try {
                 activeFFmpeg.FS('unlink', inputFileName);
                 activeFFmpeg.FS('unlink', outputFileName);
@@ -131,8 +168,6 @@
         } catch (error) {
             console.error("详细捕获:", error);
             appendLog(`❌ 发生错误: ${error.message || error}`, 'red');
-            
-            // 实例自愈
             ffmpeg = null;
             appendLog('⚠️ 转换实例已重置，您可以尝试更换更小的文件再次点击转换。', 'orange');
         } finally {
