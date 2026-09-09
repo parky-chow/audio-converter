@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>纯前端音频格式转换器</title>
-    <!-- 引入 FFmpeg.wasm 核心库 -->
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- 引入 FFmpeg.wasm v0.12 核心库 -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
     <style>
         body { font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; text-align: center; background: #f9fafb; }
         .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
@@ -39,7 +39,7 @@
 
 <script>
     const { FFmpeg } = FFmpegWASM;
-    const { fetchFile } = FFmpegUtil;
+    const { fetchFile, toBlobURL } = FFmpegUtil;
     const ffmpeg = new FFmpeg();
 
     const uploader = document.getElementById('uploader');
@@ -52,34 +52,16 @@
         logDisplay.scrollTop = logDisplay.scrollHeight;
     });
 
-    // 我们自己实现的更安全的 Blob URL 下载器，带 HTTP 状态码拦截
-    async function safeToBlobURL(url, mimeType) {
-        logDisplay.innerHTML += `<div style="color: #0066cc;">--> 正在请求: ${url.split('/').pop()}</div>`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`文件下载失败: ${url} (HTTP 状态码: ${response.status})`);
-        }
-        const blob = await response.blob();
-        return URL.createObjectURL(new Blob([blob], { type: mimeType }));
-    }
-
     async function loadFFmpeg() {
-        const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+        // 统一使用 unpkg 上的 0.12.10 版本，确保核心、wasm 与 worker 绝对匹配
+        const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/umd';
         
-        logDisplay.innerHTML += `<div>开始下载引擎依赖文件...</div>`;
-        
-        // 拆分下载，明确到底是哪个文件出错了
-        const coreURL = await safeToBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
-        const wasmURL = await safeToBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
-        const workerURL = await safeToBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript');
-        
-        logDisplay.innerHTML += `<div>文件下载完毕，正在启动引擎...</div>`;
+        logDisplay.innerHTML += `<div>正在加载转换核心组件...</div>`;
         
         await ffmpeg.load({
-            coreURL: coreURL,
-            wasmURL: wasmURL,
-            classWorkerURL: workerURL
+            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            // v0.12 标准单线程包自带 worker 逻辑，若需指定可直接由核心托管或使用标准适配
         });
         
         logDisplay.innerHTML += `<div style="color: green;">引擎启动成功！</div>`;
@@ -125,10 +107,8 @@
 
             logDisplay.innerHTML += `<div style="color: #008000; font-weight: bold;">🎉 转换成功！文件已开始下载。</div>`;
         } catch (error) {
-            // 这里我们强行解析出真实错误内容，不再显示 undefined
             let errMsg = error && error.message ? error.message : JSON.stringify(error);
             if (errMsg === "{}" || !errMsg) errMsg = String(error);
-            
             logDisplay.innerHTML += `<div style="color: red;">❌ 发生错误: ${errMsg}</div>`;
             console.error("详细报错信息:", error);
         } finally {
