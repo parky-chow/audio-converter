@@ -15,7 +15,7 @@
         button { background: #0051c3; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.2s; }
         button:disabled { background: #ccc; cursor: not-allowed; }
         button:hover:not(:disabled) { background: #003d99; }
-        #log { margin-top: 20px; font-size: 14px; color: #666; text-align: left; background: #f1f1f1; padding: 10px; border-radius: 6px; height: 100px; overflow-y: auto; font-family: monospace;}
+        #log { margin-top: 20px; font-size: 14px; color: #666; text-align: left; background: #f1f1f1; padding: 10px; border-radius: 6px; height: 120px; overflow-y: auto; font-family: monospace;}
     </style>
 </head>
 <body>
@@ -23,7 +23,7 @@
 <div class="card">
     <h1>🎧 纯前端音频转换器</h1>
     
-    <input type="file" id="uploader" accept="audio/*">
+    <input type="file" id="uploader" accept="audio/*,video/*">
     
     <select id="format-selector">
         <option value="mp3">转换为 MP3</option>
@@ -34,7 +34,7 @@
 
     <button id="convert-btn">开始转换</button>
 
-    <div id="log">等待上传文件...（首次加载需下载核心引擎，请耐心等待）</div>
+    <div id="log">等待上传文件...（首次转换需下载引擎库，请耐心等待）</div>
 </div>
 
 <script>
@@ -53,19 +53,25 @@
         logDisplay.scrollTop = logDisplay.scrollHeight;
     });
 
+    // 已修复跨域加载问题的加载函数
     async function loadFFmpeg() {
-        // 使用 toBlobURL 解决跨域 Worker 加载问题
         const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+        const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+        
         await ffmpeg.load({
+            // 核心库
             coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            // WebAssembly 文件
             wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            // 关键修复：把 worker 脚本也转为本地虚拟链接，绕过浏览器的 Worker 跨域安全限制
+            classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript')
         });
     }
 
     convertBtn.addEventListener('click', async () => {
         const file = uploader.files[0];
         if (!file) {
-            alert('请先选择一个音频文件！');
+            alert('请先选择一个文件！');
             return;
         }
 
@@ -83,15 +89,15 @@
 
             // 2. 将用户选择的文件写入 FFmpeg 的虚拟内存文件系统中
             const inputFileName = 'input_' + file.name;
-            logDisplay.innerHTML += `<div>读取文件: ${file.name}...</div>`;
+            logDisplay.innerHTML += `<div>正在将文件读入内存: ${file.name}...</div>`;
             await ffmpeg.writeFile(inputFileName, await fetchFile(file));
 
             // 3. 执行 FFmpeg 转换命令 (例如: ffmpeg -i input.wav output.mp3)
-            logDisplay.innerHTML += `<div>开始转换为 ${targetFormat.toUpperCase()}，这可能需要一点时间...</div>`;
+            logDisplay.innerHTML += `<div>开始转换为 ${targetFormat.toUpperCase()}，处理中...</div>`;
             await ffmpeg.exec(['-i', inputFileName, outputFileName]);
 
             // 4. 从虚拟文件系统中读取转换后的成品文件
-            logDisplay.innerHTML += `<div>转换完成，正在生成下载链接...</div>`;
+            logDisplay.innerHTML += `<div>转换完成，正在生成文件...</div>`;
             const fileData = await ffmpeg.readFile(outputFileName);
 
             // 5. 将成品文件转化为 Blob 对象，并触发浏览器自动下载
@@ -105,7 +111,7 @@
             a.click();
             document.body.removeChild(a);
 
-            logDisplay.innerHTML += `<div style="color: green;">🎉 转换成功！文件已开始下载。</div>`;
+            logDisplay.innerHTML += `<div style="color: #008000; font-weight: bold;">🎉 转换成功！文件已开始下载。</div>`;
         } catch (error) {
             logDisplay.innerHTML += `<div style="color: red;">❌ 发生错误: ${error.message}</div>`;
             console.error(error);
