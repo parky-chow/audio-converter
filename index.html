@@ -12,7 +12,7 @@
         button { background: #0051c3; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.2s; }
         button:disabled { background: #ccc; cursor: not-allowed; }
         button:hover:not(:disabled) { background: #003d99; }
-        #log { margin-top: 20px; font-size: 14px; color: #666; text-align: left; background: #f1f1f1; padding: 10px; border-radius: 6px; height: 160px; overflow-y: auto; font-family: monospace; line-height: 1.5;}
+        #log { margin-top: 20px; font-size: 14px; color: #666; text-align: left; background: #f1f1f1; padding: 10px; border-radius: 6px; height: 180px; overflow-y: auto; font-family: monospace; line-height: 1.5;}
     </style>
 </head>
 <body>
@@ -31,10 +31,9 @@
 
     <button id="convert-btn">开始转换</button>
 
-    <div id="log">等待上传文件...（首次转换需自动下载引擎，请耐心等待）</div>
+    <div id="log">等待上传文件...</div>
 </div>
 
-<!-- 使用 type="module" 直接引入 ES 模块 -->
 <script type="module">
     import { FFmpeg } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
     import { fetchFile, toBlobURL } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js';
@@ -46,27 +45,35 @@
     const convertBtn = document.getElementById('convert-btn');
     const logDisplay = document.getElementById('log');
 
+    function appendLog(text, color = '#666') {
+        logDisplay.innerHTML += `<div style="color: ${color};">${text}</div>`;
+        logDisplay.scrollTop = logDisplay.scrollHeight;
+    }
+
     async function loadFFmpeg() {
-        if (ffmpeg) return;
+        if (ffmpeg && ffmpeg.loaded) return;
 
         ffmpeg = new FFmpeg();
         
         ffmpeg.on('log', ({ message }) => {
-            logDisplay.innerHTML += `<div>[FFmpeg] ${message}</div>`;
-            logDisplay.scrollTop = logDisplay.scrollHeight;
+            appendLog(`[FFmpeg] ${message}`);
         });
 
-        // 使用 ESM 路径加载核心组件，彻底解决 import 失败问题
         const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.10/dist/esm';
         
-        logDisplay.innerHTML += `<div>正在加载转换核心组件（首次加载约需几兆流量）...</div>`;
+        appendLog('正在下载 core.js...');
+        const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
         
+        appendLog('正在下载 core.wasm (文件较大，请稍候)...');
+        const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
+        
+        appendLog('正在初始化加载引擎...');
         await ffmpeg.load({
-            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            coreURL,
+            wasmURL,
         });
         
-        logDisplay.innerHTML += `<div style="color: green;">🎉 引擎启动成功！</div>`;
+        appendLog('🎉 引擎启动成功！', 'green');
     }
 
     convertBtn.addEventListener('click', async () => {
@@ -80,22 +87,29 @@
         const outputFileName = `output.${targetFormat}`;
         
         convertBtn.disabled = true;
-        logDisplay.innerHTML = `<div>正在准备转换环境...</div>`;
+        logDisplay.innerHTML = ''; // 清空旧日志
 
         try {
+            appendLog('正在准备转换环境...');
             await loadFFmpeg();
 
-            const inputFileName = 'input_' + file.name;
-            logDisplay.innerHTML += `<div>正在将文件读入内存: ${file.name}...</div>`;
-            await ffmpeg.writeFile(inputFileName, await fetchFile(file));
+            // 再次显式校验是否加载成功
+            if (!ffmpeg || !ffmpeg.loaded) {
+                throw new Error("FFmpeg 实例未成功标记为 loaded");
+            }
 
-            logDisplay.innerHTML += `<div>开始转换为 ${targetFormat.toUpperCase()}，处理中...</div>`;
+            const inputFileName = 'input_' + Date.now() + '_' + file.name;
+            appendLog(`正在将文件读入内存: ${file.name}...`);
+            const fileData = await fetchFile(file);
+            await ffmpeg.writeFile(inputFileName, fileData);
+
+            appendLog(`开始转换为 ${targetFormat.toUpperCase()}，处理中...`);
             await ffmpeg.exec(['-i', inputFileName, outputFileName]);
 
-            logDisplay.innerHTML += `<div>转换完成，正在生成文件...</div>`;
-            const fileData = await ffmpeg.readFile(outputFileName);
+            appendLog('转换完成，正在生成下载文件...');
+            const data = await ffmpeg.readFile(outputFileName);
 
-            const blob = new Blob([fileData.buffer], { type: `audio/${targetFormat}` });
+            const blob = new Blob([data.buffer], { type: `audio/${targetFormat}` });
             const downloadUrl = URL.createObjectURL(blob);
             
             const a = document.createElement('a');
@@ -105,12 +119,10 @@
             a.click();
             document.body.removeChild(a);
 
-            logDisplay.innerHTML += `<div style="color: #008000; font-weight: bold;">🎉 转换成功！文件已开始下载。</div>`;
+            appendLog('🎉 转换成功！文件已自动下载。', 'green');
         } catch (error) {
-            let errMsg = error && error.message ? error.message : JSON.stringify(error);
-            if (errMsg === "{}" || !errMsg) errMsg = String(error);
-            logDisplay.innerHTML += `<div style="color: red;">❌ 发生错误: ${errMsg}</div>`;
-            console.error("详细报错信息:", error);
+            console.error("详细捕获:", error);
+            appendLog(`❌ 发生错误: ${error.message || error}`, 'red');
         } finally {
             convertBtn.disabled = false;
         }
